@@ -1,0 +1,5 @@
+{
+  "name": "GenJira - AI Powered Kanban",
+  "description": "A state-of-the-art, Jira-style Kanban board with Supabase backend, multilayer drag-and-drop, and Gemini AI integration.",
+  "requestFramePermissions": []
+}

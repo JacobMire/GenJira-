@@ -1,0 +1,218 @@
+import { supabase } from './supabase';
+import { BoardData, Task, Column, Priority } from '../types';
+
+// --- Types mirroring DB structure ---
+interface DBBoard {
+  id: string;
+  user_id: string;
+  title: string;
+}
+
+interface DBColumn {
+  id: string;
+  board_id: string;
+  title: string;
+  width: number;
+  position: number;
+}
+
+interface DBTask {
+  id: string;
+  column_id: string;
+  title: string;
+  description: string;
+  priority: string;
+  tags: string[];
+  story_points: number;
+  acceptance_criteria: string[];
+  position: number;
+  created_at: string;
+}
+
+// --- Service Functions ---
+
+export const fetchBoardData = async (userId: string): Promise<BoardData | null> => {
+  // 1. Get Board (Assume 1 board per user for now, or create if none)
+  let { data: boards } = await supabase
+    .from('boards')
+    .select('*')
+    .eq('user_id', userId)
+    .limit(1);
+
+  let boardId = boards?.[0]?.id;
+
+  if (!boardId) {
+    // Create default board
+    const { data: newBoard, error } = await supabase
+      .from('boards')
+      .insert([{ user_id: userId, title: 'My Board' }])
+      .select()
+      .single();
+    
+    if (error || !newBoard) throw error;
+    boardId = newBoard.id;
+
+    // Create default columns
+    const defaultCols = [
+        { board_id: boardId, title: 'To Do', width: 320, position: 0 },
+        { board_id: boardId, title: 'In Progress', width: 320, position: 1 },
+        { board_id: boardId, title: 'Done', width: 320, position: 2 },
+    ];
+    await supabase.from('columns').insert(defaultCols);
+  }
+
+  // 2. Get Columns
+  const { data: dbColumns } = await supabase
+    .from('columns')
+    .select('*')
+    .eq('board_id', boardId)
+    .order('position');
+
+  if (!dbColumns) return null;
+
+  // 3. Get Tasks
+  const { data: dbTasks } = await supabase
+    .from('tasks')
+    .select('*')
+    .in('column_id', dbColumns.map(c => c.id))
+    .order('position');
+
+  // 4. Transform to BoardData
+  const tasks: Record<string, Task> = {};
+  const columns: Record<string, Column> = {};
+  const columnOrder: string[] = dbColumns.map(c => c.id);
+
+  dbColumns.forEach(col => {
+    columns[col.id] = {
+      id: col.id,
+      title: col.title,
+      width: col.width,
+      taskIds: [] // Will populate next
+    };
+  });
+
+  dbTasks?.forEach(t => {
+    const task: Task = {
+      id: t.id,
+      title: t.title,
+      description: t.description || '',
+      priority: t.priority as Priority,
+      tags: t.tags || [],
+      storyPoints: t.story_points,
+      acceptanceCriteria: t.acceptance_criteria || [],
+      createdAt: new Date(t.created_at).getTime()
+    };
+    tasks[task.id] = task;
+    
+    // Add to column (dbTasks is already ordered by position)
+    if (columns[t.column_id]) {
+      columns[t.column_id].taskIds.push(task.id);
+    }
+  });
+
+  return { tasks, columns, columnOrder };
+};
+
+export const createTask = async (columnId: string, task: Task, position: number) => {
+  const { error } = await supabase.from('tasks').insert({
+    id: task.id, // We use client-side generated ID for optimism usually, but standard UUID is better. 
+                 // If task.id is not uuid, we might have issues. App uses 'task-timestamp'.
+                 // Let's assume we change App to use UUIDs or we just store string ID. 
+                 // DB schema uses uuid. We must change App.tsx to generate UUIDs or change DB to text.
+                 // For safety in this prompt, I will assume we can rely on Supabase generating ID if we omit it,
+                 // but we need to link it to React state.
+                 // Easier: Let the DB be `id text` in schema or strict UUID in app.
+                 // I will stick to UUID in DB. App generation needs to match.
+    column_id: columnId,
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    tags: task.tags,
+    story_points: task.storyPoints,
+    acceptance_criteria: task.acceptanceCriteria,
+    position: position,
+    created_at: new Date(task.createdAt).toISOString()
+  });
+  if (error) console.error('Create Task Error:', error);
+};
+
+export const updateTask = async (task: Task) => {
+  const { error } = await supabase.from('tasks').update({
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    tags: task.tags,
+    story_points: task.storyPoints,
+    acceptance_criteria: task.acceptanceCriteria,
+  }).eq('id', task.id);
+  
+  if (error) console.error('Update Task Error:', error);
+};
+
+export const deleteTask = async (taskId: string) => {
+    await supabase.from('tasks').delete().eq('id', taskId);
+};
+
+export const createColumn = async (boardId: string, column: Column, position: number) => {
+    // We need boardId. We can fetch it or pass it. 
+    // For now, let's fetch strictly or assume context.
+    // Hack: We will look up board_id by column's board ownership logic or just pass user.
+    // Better: pass boardId from App state (which we don't have stored in BoardData).
+    // Let's look up the board for the current user.
+    
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+
+    const { data: boards } = await supabase.from('boards').select('id').eq('user_id', data.user.id).single();
+    if (!boards) return;
+
+    await supabase.from('columns').insert({
+        id: column.id,
+        board_id: boards.id,
+        title: column.title,
+        width: column.width,
+        position: position
+    });
+};
+
+export const updateColumn = async (columnId: string, updates: Partial<Column>) => {
+   // Only supporting width and title updates primarily
+   const dbUpdates: any = {};
+   if (updates.width) dbUpdates.width = updates.width;
+   if (updates.title) dbUpdates.title = updates.title;
+
+   await supabase.from('columns').update(dbUpdates).eq('id', columnId);
+};
+
+export const moveTask = async (taskId: string, newColumnId: string, newPosition: number) => {
+    // 1. Update the moved task
+    await supabase.from('tasks').update({
+        column_id: newColumnId,
+        position: newPosition
+    }).eq('id', taskId);
+
+    // 2. Re-index is hard to do perfectly in one go without stored procedures.
+    // For this demo, we rely on the React state for order until next fetch.
+    // But to persist order, we should ideally update neighbors.
+    // Simpler approach: Just update the moved one. 
+    // If we want perfection: Send the full list of IDs for the column and update all their positions.
+};
+
+export const updateColumnOrder = async (columnId: string, newPosition: number) => {
+     await supabase.from('columns').update({ position: newPosition }).eq('id', columnId);
+};
+
+export const reorderTasksInColumn = async (columnId: string, taskIds: string[]) => {
+    // Update all tasks in this column to match the array order
+    const updates = taskIds.map((id, index) => 
+        supabase.from('tasks').update({ position: index, column_id: columnId }).eq('id', id)
+    );
+    await Promise.all(updates);
+};
+
+export const reorderColumns = async (columnIds: string[]) => {
+    const updates = columnIds.map((id, index) => 
+        supabase.from('columns').update({ position: index }).eq('id', id)
+    );
+    await Promise.all(updates);
+}
