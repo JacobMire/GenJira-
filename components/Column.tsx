@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Droppable } from '@hello-pangea/dnd';
 import { Column as ColumnType, Task } from '../types';
 import TaskCard from './TaskCard';
-import { MoreHorizontal, Plus, GripVertical } from 'lucide-react';
+import { MoreHorizontal, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
 
 interface ColumnProps {
   column: ColumnType;
@@ -11,6 +11,8 @@ interface ColumnProps {
   onAddTask: (columnId: string) => void;
   isLayoutMode: boolean;
   onResize: (columnId: string, width: number) => void;
+  onRename: (columnId: string, title: string) => void;
+  onDelete: (columnId: string) => void;
 }
 
 const Column: React.FC<ColumnProps> = ({ 
@@ -19,54 +21,56 @@ const Column: React.FC<ColumnProps> = ({
   onTaskClick, 
   onAddTask,
   isLayoutMode,
-  onResize
+  onResize,
+  onRename,
+  onDelete
 }) => {
   const [width, setWidth] = useState(column.width || 320);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [titleInput, setTitleInput] = useState(column.title);
+  
   const isResizingRef = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Sync with prop if it changes externally (e.g. initial load or reset)
+  // Sync with prop if it changes externally
   useEffect(() => {
     if (column.width) {
       setWidth(column.width);
     }
   }, [column.width]);
+  
+  useEffect(() => {
+      setTitleInput(column.title);
+  }, [column.title]);
 
-  const startResize = (e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizingRef.current = true;
-    
-    const startX = e.clientX;
-    const startWidth = width;
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      if (!isResizingRef.current) return;
-      const delta = moveEvent.clientX - startX;
-      // Enforce min width of 250px and max of 800px
-      const newWidth = Math.min(Math.max(250, startWidth + delta), 800);
-      setWidth(newWidth);
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
     };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-    const onMouseUp = () => {
-      isResizingRef.current = false;
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      // Persist the final width
-      onResize(column.id, width); // This might use the closure's stale width if not careful, but setWidth is async. 
-      // Better to use a ref for current width if we needed exact precision inside this closure, 
-      // but here we can just recalculate or rely on the state update being fast enough for the drag end?
-      // Actually, onMouseUp runs in the same closure scope. Let's rely on the latest value calculation.
-      // Re-calculating to be safe:
-      // However, we can't access `moveEvent` here easily.
-      // Simpler: Just save `width` state on effect or use a ref for the width value.
-    };
-    
-    // To properly save the final value, we need access to the latest width.
-    // Let's modify onMouseMove to update a ref as well, or just trigger the parent save there? 
-    // Triggering parent save on every pixel is bad.
-    // Let's use a ref to track the transient width.
+  useEffect(() => {
+      if (isRenaming && inputRef.current) {
+          inputRef.current.focus();
+      }
+  }, [isRenaming]);
+
+  const handleRenameSubmit = () => {
+      if (titleInput.trim()) {
+          onRename(column.id, titleInput);
+      } else {
+          setTitleInput(column.title); // Revert if empty
+      }
+      setIsRenaming(false);
   };
   
-  // Ref-based resize implementation for robustness
+  // Ref-based resize implementation
   const resizeHandler = (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -78,13 +82,13 @@ const Column: React.FC<ColumnProps> = ({
       const onMouseMove = (moveEvent: MouseEvent) => {
           const delta = moveEvent.clientX - startX;
           currentWidth = Math.min(Math.max(250, startWidth + delta), 800);
-          setWidth(currentWidth); // Update local visual state
+          setWidth(currentWidth); 
       };
 
       const onMouseUp = () => {
           window.removeEventListener('mousemove', onMouseMove);
           window.removeEventListener('mouseup', onMouseUp);
-          onResize(column.id, currentWidth); // Persist to parent
+          onResize(column.id, currentWidth); 
       };
 
       window.addEventListener('mousemove', onMouseMove);
@@ -97,26 +101,75 @@ const Column: React.FC<ColumnProps> = ({
         style={{ width: `${width}px` }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-3 px-1 mt-1">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 truncate">
-            {column.title}
-          </h2>
-          <span className="text-xs font-medium text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">
-            {tasks.length}
-          </span>
-        </div>
-        {!isLayoutMode && (
-          <div className="flex gap-1">
+      <div className="flex items-center justify-between mb-3 px-1 mt-1 h-8">
+        {isRenaming ? (
+            <div className="flex items-center gap-1 w-full">
+                <input 
+                    ref={inputRef}
+                    type="text" 
+                    value={titleInput}
+                    onChange={(e) => setTitleInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleRenameSubmit()}
+                    onBlur={handleRenameSubmit}
+                    className="flex-1 bg-slate-800 text-sm font-bold text-white px-2 py-1 rounded border border-primary outline-none"
+                />
+            </div>
+        ) : (
+            <div className="flex items-center gap-2">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 truncate cursor-default" title={column.title}>
+                {column.title}
+            </h2>
+            <span className="text-xs font-medium text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full shrink-0">
+                {tasks.length}
+            </span>
+            </div>
+        )}
+
+        {!isLayoutMode && !isRenaming && (
+          <div className="flex gap-1 relative">
               <button 
                   onClick={() => onAddTask(column.id)}
                   className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                  title="Create Task"
               >
                   <Plus size={16} />
               </button>
-              <button className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors">
-                  <MoreHorizontal size={16} />
-              </button>
+              
+              <div ref={menuRef}>
+                <button 
+                    onClick={() => setIsMenuOpen(!isMenuOpen)}
+                    className={`p-1 rounded transition-colors ${isMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`}
+                >
+                    <MoreHorizontal size={16} />
+                </button>
+
+                {isMenuOpen && (
+                    <div className="absolute right-0 top-8 w-40 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsRenaming(true);
+                                setIsMenuOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 flex items-center gap-2"
+                        >
+                            <Pencil size={14} /> Rename
+                        </button>
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm('Are you sure you want to delete this column? All tasks inside will be deleted.')) {
+                                    onDelete(column.id);
+                                }
+                                setIsMenuOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-900/30 flex items-center gap-2"
+                        >
+                            <Trash2 size={14} /> Delete
+                        </button>
+                    </div>
+                )}
+              </div>
           </div>
         )}
       </div>

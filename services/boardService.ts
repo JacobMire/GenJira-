@@ -115,14 +115,7 @@ export const fetchBoardData = async (userId: string): Promise<BoardData | null> 
 
 export const createTask = async (columnId: string, task: Task, position: number) => {
   const { error } = await supabase.from('tasks').insert({
-    id: task.id, // We use client-side generated ID for optimism usually, but standard UUID is better. 
-                 // If task.id is not uuid, we might have issues. App uses 'task-timestamp'.
-                 // Let's assume we change App to use UUIDs or we just store string ID. 
-                 // DB schema uses uuid. We must change App.tsx to generate UUIDs or change DB to text.
-                 // For safety in this prompt, I will assume we can rely on Supabase generating ID if we omit it,
-                 // but we need to link it to React state.
-                 // Easier: Let the DB be `id text` in schema or strict UUID in app.
-                 // I will stick to UUID in DB. App generation needs to match.
+    id: task.id, 
     column_id: columnId,
     title: task.title,
     description: task.description,
@@ -154,12 +147,6 @@ export const deleteTask = async (taskId: string) => {
 };
 
 export const createColumn = async (boardId: string, column: Column, position: number) => {
-    // We need boardId. We can fetch it or pass it. 
-    // For now, let's fetch strictly or assume context.
-    // Hack: We will look up board_id by column's board ownership logic or just pass user.
-    // Better: pass boardId from App state (which we don't have stored in BoardData).
-    // Let's look up the board for the current user.
-    
     const { data } = await supabase.auth.getUser();
     if (!data.user) return;
 
@@ -184,18 +171,15 @@ export const updateColumn = async (columnId: string, updates: Partial<Column>) =
    await supabase.from('columns').update(dbUpdates).eq('id', columnId);
 };
 
+export const deleteColumn = async (columnId: string) => {
+    await supabase.from('columns').delete().eq('id', columnId);
+};
+
 export const moveTask = async (taskId: string, newColumnId: string, newPosition: number) => {
-    // 1. Update the moved task
     await supabase.from('tasks').update({
         column_id: newColumnId,
         position: newPosition
     }).eq('id', taskId);
-
-    // 2. Re-index is hard to do perfectly in one go without stored procedures.
-    // For this demo, we rely on the React state for order until next fetch.
-    // But to persist order, we should ideally update neighbors.
-    // Simpler approach: Just update the moved one. 
-    // If we want perfection: Send the full list of IDs for the column and update all their positions.
 };
 
 export const updateColumnOrder = async (columnId: string, newPosition: number) => {
@@ -203,7 +187,6 @@ export const updateColumnOrder = async (columnId: string, newPosition: number) =
 };
 
 export const reorderTasksInColumn = async (columnId: string, taskIds: string[]) => {
-    // Update all tasks in this column to match the array order
     const updates = taskIds.map((id, index) => 
         supabase.from('tasks').update({ position: index, column_id: columnId }).eq('id', id)
     );

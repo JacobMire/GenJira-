@@ -86,7 +86,7 @@ const App: React.FC = () => {
     let newData = { ...data };
 
     if (startColumn === finishColumn) {
-      const newTaskIds = Array.from(startColumn.taskIds);
+      const newTaskIds = Array.from(startColumn.taskIds) as string[];
       newTaskIds.splice(source.index, 1);
       newTaskIds.splice(destination.index, 0, draggableId);
 
@@ -100,11 +100,11 @@ const App: React.FC = () => {
     }
 
     // Moving to different column
-    const startTaskIds = Array.from(startColumn.taskIds);
+    const startTaskIds = Array.from(startColumn.taskIds) as string[];
     startTaskIds.splice(source.index, 1);
     const newStart = { ...startColumn, taskIds: startTaskIds };
 
-    const finishTaskIds = Array.from(finishColumn.taskIds);
+    const finishTaskIds = Array.from(finishColumn.taskIds) as string[];
     finishTaskIds.splice(destination.index, 0, draggableId);
     const newFinish = { ...finishColumn, taskIds: finishTaskIds };
 
@@ -182,7 +182,6 @@ const App: React.FC = () => {
     // DB: Insert at position 0
     await boardService.createTask(columnId, newTask, 0);
     // We should also push down other tasks in DB, but for now we rely on reorderTasksInColumn on next drag or reload
-    // To be cleaner, we can reorder immediately:
     await boardService.reorderTasksInColumn(columnId, newData.columns[columnId].taskIds);
   };
 
@@ -212,7 +211,40 @@ const App: React.FC = () => {
     setIsAddingColumn(false);
 
     // DB
-    await boardService.createColumn('', newColumn, newOrder.length - 1); // Service handles board lookup
+    await boardService.createColumn('', newColumn, newOrder.length - 1); 
+  };
+
+  const handleRenameColumn = async (columnId: string, title: string) => {
+    setData((prev) => ({
+      ...prev,
+      columns: {
+        ...prev.columns,
+        [columnId]: { ...prev.columns[columnId], title },
+      },
+    }));
+    await boardService.updateColumn(columnId, { title });
+  };
+
+  const handleDeleteColumn = async (columnId: string) => {
+    setData((prev) => {
+      const newOrder = prev.columnOrder.filter((id) => id !== columnId);
+      const newColumns = { ...prev.columns };
+      
+      // Cleanup tasks that were in this column from local state (optional but clean)
+      // const tasksToDelete = newColumns[columnId]?.taskIds || [];
+      // const newTasks = { ...prev.tasks };
+      // tasksToDelete.forEach(tid => delete newTasks[tid]);
+
+      delete newColumns[columnId];
+  
+      return {
+          ...prev,
+          columnOrder: newOrder,
+          columns: newColumns
+      };
+    });
+    
+    await boardService.deleteColumn(columnId);
   };
 
   const handleResizeColumn = async (columnId: string, width: number) => {
@@ -226,7 +258,6 @@ const App: React.FC = () => {
         },
       },
     }));
-    // Debouncing would be better, but direct update is fine for low frequency
     await boardService.updateColumn(columnId, { width });
   };
 
@@ -250,7 +281,7 @@ const App: React.FC = () => {
           });
           acc[colId] = { ...col, taskIds: filteredTaskIds };
           return acc;
-      }, {} as Record<string, typeof data.columns['col-1']>)
+      }, {} as Record<string, ColumnType>)
   };
 
   if (loading) {
@@ -344,44 +375,48 @@ const App: React.FC = () => {
                   onAddTask={handleCreateTask}
                   isLayoutMode={isLayoutMode}
                   onResize={handleResizeColumn}
+                  onRename={handleRenameColumn}
+                  onDelete={handleDeleteColumn}
                 />
               );
             })}
             
             {/* Add Column Section */}
-            {isAddingColumn ? (
-              <div className="w-80 min-w-[320px] max-w-[320px] mx-2 p-3 bg-slate-900/50 rounded-xl border border-white/5 flex flex-col gap-2 shrink-0 animate-in fade-in zoom-in-95 duration-200">
-                <input 
-                  autoFocus
-                  type="text" 
-                  placeholder="Column Title"
-                  value={newColumnTitle}
-                  onChange={(e) => setNewColumnTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddColumn()}
-                  className="w-full bg-slate-800 text-slate-200 text-sm rounded border border-slate-700 p-2 focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-                />
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={handleAddColumn}
-                    className="px-3 py-1.5 bg-primary hover:bg-blue-600 text-white text-xs font-medium rounded transition-colors"
-                  >
-                    Add Column
-                  </button>
-                  <button 
-                    onClick={() => setIsAddingColumn(false)}
-                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                  >
-                    <X size={16} />
-                  </button>
+            {isLayoutMode && (
+              isAddingColumn ? (
+                <div className="w-80 min-w-[320px] max-w-[320px] mx-2 p-3 bg-slate-900/50 rounded-xl border border-white/5 flex flex-col gap-2 shrink-0 animate-in fade-in zoom-in-95 duration-200">
+                  <input 
+                    autoFocus
+                    type="text" 
+                    placeholder="Column Title"
+                    value={newColumnTitle}
+                    onChange={(e) => setNewColumnTitle(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddColumn()}
+                    className="w-full bg-slate-800 text-slate-200 text-sm rounded border border-slate-700 p-2 focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={handleAddColumn}
+                      className="px-3 py-1.5 bg-primary hover:bg-blue-600 text-white text-xs font-medium rounded transition-colors"
+                    >
+                      Add Column
+                    </button>
+                    <button 
+                      onClick={() => setIsAddingColumn(false)}
+                      className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <button
-                  onClick={() => setIsAddingColumn(true)}
-                  className="w-80 min-w-[320px] max-w-[320px] h-12 mx-2 shrink-0 border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-slate-500 hover:text-slate-300 hover:border-slate-500 hover:bg-slate-800/30 cursor-pointer transition-all"
-              >
-                  <span className="flex items-center gap-2 text-sm font-medium"><Plus size={16}/> Add Column</span>
-              </button>
+              ) : (
+                <button
+                    onClick={() => setIsAddingColumn(true)}
+                    className="w-80 min-w-[320px] max-w-[320px] h-12 mx-2 shrink-0 border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-slate-500 hover:text-slate-300 hover:border-slate-500 hover:bg-slate-800/30 cursor-pointer transition-all"
+                >
+                    <span className="flex items-center gap-2 text-sm font-medium"><Plus size={16}/> Add Column</span>
+                </button>
+              )
             )}
           </div>
         </DragDropContext>
@@ -393,7 +428,7 @@ const App: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         onSave={handleSaveTask}
         onDelete={handleDeleteTask}
-        columnTitle={selectedTask ? Object.values(data.columns).find(col => col.taskIds.includes(selectedTask.id))?.title : ''}
+        columnTitle={selectedTask ? (Object.values(data.columns) as ColumnType[]).find(col => col.taskIds.includes(selectedTask.id))?.title : ''}
       />
     </div>
   );
