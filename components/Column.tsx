@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Droppable } from '@hello-pangea/dnd';
 import { Column as ColumnType, Task } from '../types';
 import TaskCard from './TaskCard';
-import { MoreHorizontal, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { MoreHorizontal, Plus, Trash2, Pencil, Check, X, Sparkles } from 'lucide-react';
 
 interface ColumnProps {
   column: ColumnType;
   tasks: Task[];
   onTaskClick: (task: Task) => void;
   onAddTask: (columnId: string) => void;
+  onBulkImport: (columnId: string) => void;
   isLayoutMode: boolean;
   onResize: (columnId: string, width: number) => void;
   onRename: (columnId: string, title: string) => void;
@@ -20,6 +21,7 @@ const Column: React.FC<ColumnProps> = ({
   tasks, 
   onTaskClick, 
   onAddTask,
+  onBulkImport,
   isLayoutMode,
   onResize,
   onRename,
@@ -127,6 +129,13 @@ const Column: React.FC<ColumnProps> = ({
 
         {!isLayoutMode && !isRenaming && (
           <div className="flex gap-1 relative">
+               <button 
+                  onClick={() => onBulkImport(column.id)}
+                  className="p-1 text-slate-400 hover:text-accent hover:bg-slate-700 rounded transition-colors"
+                  title="Magic Import Tasks"
+              >
+                  <Sparkles size={16} />
+              </button>
               <button 
                   onClick={() => onAddTask(column.id)}
                   className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"

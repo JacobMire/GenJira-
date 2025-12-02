@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
 import Column from './components/Column';
 import Modal from './components/Modal';
+import BulkImportModal from './components/BulkImportModal';
 import { Auth } from './components/Auth';
 import { BoardData, Task, Priority, Column as ColumnType } from './types';
 import { Plus, Search, Kanban, X, Settings2, Check, LogOut, Loader2 } from 'lucide-react';
 import { supabase } from './services/supabase';
 import { Session } from '@supabase/supabase-js';
 import * as boardService from './services/boardService';
+import { generateTasksFromText } from './services/geminiService';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -16,6 +18,11 @@ const App: React.FC = () => {
   const [data, setData] = useState<BoardData>({ tasks: {}, columns: {}, columnOrder: [] });
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Bulk Import State
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddingColumn, setIsAddingColumn] = useState(false);
   const [newColumnTitle, setNewColumnTitle] = useState('');
@@ -198,6 +205,62 @@ const App: React.FC = () => {
     await boardService.createTask(columnId, newTask, 0);
     // We should also push down other tasks in DB, but for now we rely on reorderTasksInColumn on next drag or reload
     await boardService.reorderTasksInColumn(columnId, newData.columns[columnId].taskIds);
+  };
+
+  const handleOpenBulkModal = (columnId: string) => {
+    setActiveColumnId(columnId);
+    setIsBulkModalOpen(true);
+  };
+
+  const handleBulkImport = async (rawText: string) => {
+    if (!activeColumnId) return;
+
+    const generatedTasks = await generateTasksFromText(rawText);
+    
+    const newTasksMap: Record<string, Task> = {};
+    const newTaskIds: string[] = [];
+    const timestamp = Date.now();
+
+    // Create Task objects
+    generatedTasks.forEach((t, i) => {
+       const newTaskId = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID() 
+        : `task-${timestamp}-${i}-${Math.random().toString(36).substr(2, 9)}`;
+       
+       const task: Task = {
+         id: newTaskId,
+         title: t.title,
+         description: t.description,
+         priority: t.priority,
+         tags: t.tags || [],
+         storyPoints: t.storyPoints,
+         createdAt: timestamp + i
+       };
+
+       newTasksMap[newTaskId] = task;
+       newTaskIds.push(newTaskId);
+    });
+
+    // Update Local State
+    setData(prev => ({
+      ...prev,
+      tasks: { ...prev.tasks, ...newTasksMap },
+      columns: {
+        ...prev.columns,
+        [activeColumnId]: {
+          ...prev.columns[activeColumnId],
+          taskIds: [...prev.columns[activeColumnId].taskIds, ...newTaskIds]
+        }
+      }
+    }));
+
+    // Update DB (Batch insert via loop for now)
+    const columnTaskIds = data.columns[activeColumnId].taskIds;
+    const startPos = columnTaskIds.length; // Appending to end
+
+    await Promise.all(newTaskIds.map((taskId, index) => {
+        return boardService.createTask(activeColumnId, newTasksMap[taskId], startPos + index);
+    }));
   };
 
   const handleAddColumn = async () => {
@@ -392,6 +455,7 @@ const App: React.FC = () => {
                   tasks={tasks} 
                   onTaskClick={handleTaskClick}
                   onAddTask={handleCreateTask}
+                  onBulkImport={handleOpenBulkModal}
                   isLayoutMode={isLayoutMode}
                   onResize={handleResizeColumn}
                   onRename={handleRenameColumn}
@@ -448,6 +512,13 @@ const App: React.FC = () => {
         onSave={handleSaveTask}
         onDelete={handleDeleteTask}
         columnTitle={selectedTask ? (Object.values(data.columns) as ColumnType[]).find(col => col.taskIds.includes(selectedTask.id))?.title : ''}
+      />
+
+      <BulkImportModal 
+        isOpen={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        onImport={handleBulkImport}
+        columnTitle={activeColumnId ? data.columns[activeColumnId]?.title : ''}
       />
     </div>
   );
